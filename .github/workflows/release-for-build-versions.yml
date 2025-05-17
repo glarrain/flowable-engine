@@ -1,0 +1,93 @@
+name: Create Release on Version Bump
+
+# Controls when the workflow will run
+on:
+  push:
+    branches:
+      # This is the branch to monitor.
+      # As requested, it's hard-coded but can be changed here or parameterized.
+      - flowable-release-7.3.0
+    paths:
+      # Only run the workflow if this specific file changes.
+      - 'distro/build.xml'
+  # Allows you to run this workflow manually from the Actions tab (optional)
+  workflow_dispatch:
+
+jobs:
+  create_release:
+    name: Extract Version and Create Release
+    runs-on: ubuntu-latest
+    # Grant permissions to write contents (create tags and releases)
+    permissions:
+      contents: write
+
+    steps:
+      # Step 1: Check out the repository code
+      # This allows the workflow to access your repository's files.
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Fetch all history for all branches and tags.
+          # This is important for git tagging operations.
+          fetch-depth: 0
+
+      # Step 2: Extract version from distro/build.xml
+      # This step reads the flowable.version property from the build.xml file.
+      - name: Extract version from build.xml
+        id: extract_version
+        run: |
+          # Ensure xmllint is available (it's usually pre-installed on ubuntu-latest runners)
+          if ! command -v xmllint &> /dev/null
+          then
+              echo "xmllint could not be found. Attempting to install libxml2-utils..."
+              sudo apt-get update && sudo apt-get install -y libxml2-utils
+          fi
+          
+          # Use xmllint to parse the XML and extract the property value
+          # The XPath looks for any <property> tag with name="flowable.version"
+          # and extracts its "value" attribute.
+          VERSION=$(xmllint --xpath "string(//property[@name='flowable.version']/@value)" distro/build.xml)
+          
+          # Check if the version was successfully extracted
+          if [ -z "$VERSION" ]; then
+            echo "Error: flowable.version not found or its value is empty in distro/build.xml"
+            exit 1
+          fi
+          
+          echo "Extracted version: $VERSION"
+          # Set the extracted version as an output for subsequent steps
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Step 3: Create GitHub Release
+      # This step uses the extracted version to create a new Git tag and a GitHub Release.
+      - name: Create GitHub Release
+        id: create_github_release
+        uses: actions/create-release@v1
+        env:
+          # The GITHUB_TOKEN is automatically provided by GitHub Actions
+          # and has the necessary permissions (due to `permissions: contents: write` above).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The tag name will be the version string itself (e.g., "7.3.0.1").
+          # If you prefer a "v" prefix (e.g., "v7.3.0.1"), change this to:
+          # tag_name: v${{ steps.extract_version.outputs.VERSION }}
+          tag_name: ${{ steps.extract_version.outputs.VERSION }}
+          
+          # The name of the release (e.g., "Release 7.3.0.1").
+          release_name: Release ${{ steps.extract_version.outputs.VERSION }}
+          
+          # The commit to tag. Defaults to the commit that triggered the workflow (github.sha).
+          # commitish: ${{ github.sha }} 
+          
+          # Set to 'true' to create a draft release that you can publish manually.
+          draft: false
+          
+          # Set to 'true' if this is a pre-release.
+          prerelease: true
+          
+          # Optional: You can specify release notes here.
+          # If omitted, the release body will be empty, or you can configure
+          # it to auto-generate based on pull requests.
+          # body: |
+          #   Automatic release for version ${{ steps.extract_version.outputs.VERSION }}.
+          #   For detailed changes, please refer to the commit history.
